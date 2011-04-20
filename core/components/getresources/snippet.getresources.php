@@ -3,6 +3,8 @@
 
 $modx->getService('fire', 'modFire', $modx->getOption('core_path').'components/modfire/');
 
+$snippetStart = $modx->getMicroTime();
+$modx->fire->info('Starting snippet execution timer');
 
 /**
  * getResources
@@ -78,7 +80,25 @@ $outputSeparator = isset($outputSeparator) ? $outputSeparator : "\n";
 /* set default properties */
 $tpl = !empty($tpl) ? $tpl : '';
 $includeContent = !empty($includeContent) ? true : false;
-$includeTVs = !empty($includeTVs) ? true : false;
+$includeTVs = isset($includeTVs) ? $includeTVs : false;
+
+$modx->fire->log('$includeTVs: ');
+$modx->fire->log($includeTVs);
+
+switch ($includeTVs) {
+	case '1':
+	case 'true':
+		$includeTVs = array();	
+		break;
+	case '0':
+	case 'false':
+	case false:
+		$includeTVs = false;	
+		break;
+	default: 
+		$includeTVs = explode(',', $includeTVs);	
+}
+
 $processTVs = !empty($processTVs) ? true : false;
 $tvPrefix = isset($tvPrefix) ? $tvPrefix : 'tv.';
 $parents = (!empty($parents) || $parents === '0') ? explode(',', $parents) : array($modx->resource->get('id'));
@@ -159,7 +179,13 @@ if (!empty($resources)) {
     }
 }
 
+
+$modx->fire->log('Preparation completed: ' . ($modx->getMicroTime() - $snippetStart));
+
+
 // Parse TV filters
+$tvsInFilters = array();
+
 if (!empty($tvFilters)) {
     $conditions = array();
     foreach ($tvFilters as $fGroup => $tvFilter) {
@@ -185,12 +211,14 @@ if (!empty($tvFilters)) {
         $f = explode($foundOperator, $filter);
             
         // And split into TV name and value
-        if (count($f) > 2) {// In case the operator was also found in the value, put those bits back together again to reinstate the value
+        if (count($f) > 2) { // In case the operator was also found in the value, put those bits back together again to reinstate the value
           $tvName = array_shift($f);
           $tvValue = implode($foundOperator, $f);
+		  $tvsInFilters[] = $tvName;
         } else if (count($f) == 2) { 
           $tvName = $f[0];
           $tvValue = $f[1];
+		  $tvsInFilters[] = $tvName;
         } else {
           $tvName = '';
           $tvValue = $f[0];
@@ -204,6 +232,8 @@ if (!empty($tvFilters)) {
 } else {
 	$conditions = array();	
 }
+
+$modx->fire->log('Conditions parsed: ' . ($modx->getMicroTime() - $snippetStart));
 
 
 if (!empty($where)) {
@@ -282,25 +312,63 @@ if (!empty($debug)) {
 }
 $collection = $modx->getCollection('modResource', $criteria);
 
+$modx->fire->log('Query completed: ' . ($modx->getMicroTime() - $snippetStart));
+
+
+$tv_cache = array();
 
 // Now we have a basic set of results, are we retrieving or filtering on TVs?
-if (!empty($includeTVs) || !empty($conditions)) {   
-
-  $tv_cache = array();
+if ($includeTVs !== false || !empty($conditions)) {    
+  
+  // Define some functions to abstract the comparisons from PHP syntax for future flexibility
+  if (!function_exists('equals')) { 
+	  function equals($a,$b) { 
+		// Is there a wildcard (not escaped)?
+		if (strpos($b, '%' !== false) && strpos($b, '\%' === false)) {
+			// Make the search term regexp friendly
+			$b_processed = str_replace('%', '.*', $b); // Wildcard
+			$b_processed = str_replace( array('[','\\', '^','$','.','|','*','+','(',')'), array('\[','\\\\', '\^','\$','\.','\|','\*','\+','\(','\)'), $b_processed); // Special regexp characters
+			return preg_match( $b_processed, $a);
+		} else {
+			return ($a == $b);  
+		}
+	  }
+  }
+  if (!function_exists('notequals')) { function notequals($a,$b) { return !equals($a, $b);  } }
+  if (!function_exists('lteq')) { function lteq($a,$b) { return ($a <= $b);  } }
+  if (!function_exists('gteq')) { function gteq($a,$b) { return ($a >= $b);  } }
+  if (!function_exists('in')) { function in($a,$b,$delimiter) { 
+	$haystack = explode($delimiter, $a); 
+	return in_array($b, $haystack);  
+	} } 
+  if (!function_exists('notin')) { function notin($a,$b,$delimiter) { return !in($a,$b,$delimiter);  } }
+  if (!function_exists('lt')) { function lt($a,$b) { return ($a < $b);  } }
+  if (!function_exists('gt')) { function gt($a,$b) { return ($a > $b);  } }
+		  
+	
+		  
+  
+ 
 
   // Go through each resource which has been found, and populate it with TV values. Do this once.
   foreach ($collection as $resourceId => $resource) {    
-    
-    // Get the TVs for this resource    
+
     $templateVars =& $resource->getMany('TemplateVars');
 	$id = $resource->get('id');
     
-    foreach ($templateVars as $tvId => $templateVar) {
+    foreach ($templateVars as $tvId => $templateVar) {	  
       
       // Get TV info	 
       $tvName = $templateVar->get('name');
-      $tvType = $templateVar->get('type');
-      $tvValue = !empty($processTVs) ? $templateVar->renderOutput($id) : $templateVar->get('value');
+	  
+	  // If we aren't using this TV for filtering
+	  if (!in_array($tvName,  $tvsInFilters)) {
+		  $tv_cache['resource'.$id][$tvName] = false;
+		  continue;
+	  }
+	  
+      $tvType = $templateVar->get('type');	 	  
+      $tvValue = !empty($processTVs) ? $templateVar->renderOutput($id) : $templateVar->get('value');  
 	    
 	  $output_properties = $templateVar->get('output_properties'); // Get delimiter, if set
 	  $tvDelimiter = (isset($output_properties['delimiter'])) ? $output_properties['delimiter'] : '';	  
@@ -319,21 +387,27 @@ if (!empty($includeTVs) || !empty($conditions)) {
         'type' => $tvType,
 		'delimiter' => $tvDelimiter
       );
+
       
     }  
-    
+	
+	
     
     // Are we including this resource?
     if (!empty($conditions)) {
        
       $keep_group = false; 
+	  
+	 
        
-      foreach ($conditions as $cGroup => $c) {
-        
+      foreach ($conditions as $cGroup => $c) {        
         $keep = false;
+		
+		  
         
         foreach ($c as $thisCriteria) {  
-                
+		
+		      
           
           // If it's a wildcard, keep and check the next criteria
           if ($thisCriteria['tvValue'] == '%') {
@@ -341,31 +415,7 @@ if (!empty($includeTVs) || !empty($conditions)) {
             continue;  
           }
           
-          // Define some functions to abstract the comparisons from PHP syntax for future flexibility
-          if (!function_exists('equals')) { 
-			  function equals($a,$b) { 
-			  	// Is there a wildcard (not escaped)?
-				if (strpos($b, '%' !== false) && strpos($b, '\%' === false)) {
-					// Make the search term regexp friendly
-					$b_processed = str_replace('%', '.*', $b); // Wildcard
-					$b_processed = str_replace( array('[','\\', '^','$','.','|','*','+','(',')'), array('\[','\\\\', '\^','\$','\.','\|','\*','\+','\(','\)'), $b_processed); // Special regexp characters
-					return preg_match( $b_processed, $a);
-				} else {
-					return ($a == $b);  
-				}
-			  }
-		  }
-          if (!function_exists('notequals')) { function notequals($a,$b) { return !equals($a, $b);  } }
-          if (!function_exists('lteq')) { function lteq($a,$b) { return ($a <= $b);  } }
-          if (!function_exists('gteq')) { function gteq($a,$b) { return ($a >= $b);  } }
-		  if (!function_exists('in')) { function in($a,$b,$delimiter) { 
-			$haystack = explode($delimiter, $a); 
-			return in_array($b, $haystack);  
-			} } 
-		  if (!function_exists('notin')) { function notin($a,$b,$delimiter) { return !in($a,$b,$delimiter);  } }
-		  if (!function_exists('lt')) { function lt($a,$b) { return ($a < $b);  } }
-          if (!function_exists('gt')) { function gt($a,$b) { return ($a > $b);  } }
-          
+                    
           // Which operator to use?
           switch ($thisCriteria['operator']) {            
             case '==':
@@ -427,6 +477,8 @@ if (!empty($includeTVs) || !empty($conditions)) {
             
           // If there is a specific TV name, check that one  
           } else if ($thisCriteria["tvName"] != '') {
+			  
+			 
                         
             // The TV value
             $tvValue = $tv_cache['resource'.$id][$thisCriteria["tvName"]]['valueParsed'];
@@ -443,33 +495,41 @@ if (!empty($includeTVs) || !empty($conditions)) {
               $keep = false;
               break; 
             } 
+			
+			
           // Else remove this resource    
           } else {
             $keep = false;
             break;
           }
+		  
+			
         }
-        
+		
+		
         // If this group has proven to be true, since groups are OR, we don't need to evaluate any further
         if ($keep) {
           $keep_group = true;
           break;  
         } else {
         }
-        
+     
       }
-      
+	  
+        
+     
       // If we're not keeping, remove from the collections array
       if (!$keep_group) {
         unset($collection[$resourceId]);		
       }
       
     }
+	
     
   }
 }
 
-
+$modx->fire->log('TV filtering completed: ' . ($modx->getMicroTime() - $snippetStart));
 
 // Set a placeholder to record the total number of results found
 $total = count($collection);
@@ -487,6 +547,13 @@ $last = empty($last) ? (count($collection) + $idx - 1) : intval($last);
 
 
 
+$modx->fire->log('Starting to parse templates: ' . ($modx->getMicroTime() - $snippetStart));
+
+$modx->fire->log('$includeTVs: ');
+$modx->fire->log($includeTVs);
+
+$modx->fire->log('$tv_cache: ');
+$modx->fire->log($tv_cache);
 
 /* include parseTpl */
 include_once $modx->getOption('getresources.core_path',null,$modx->getOption('core_path').'components/getresources/').'include.parsetpl.php';
@@ -494,11 +561,30 @@ include_once $modx->getOption('getresources.core_path',null,$modx->getOption('co
 foreach ($collection as $resourceId => $resource) {
     $tvs = array();
 	$id = $resource->get('id');
-    if (!empty($includeTVs)) {
+	
+    if ($includeTVs !== false) { 
+		
+		if (is_array($includeTVs) && empty($includeTVs)) {
+			$useAllTVs = true;
+		}
+		$tvsToInclude = array_merge($tvsInFilters, $includeTVs);	
+		
+		$modx->fire->log("Using all TVs? $useAllTVs");	
+						
         foreach ($tv_cache['resource'.$id] as $tvId => $templateVal) {
-            $tvs[$tvPrefix . $tvId] = $templateVal['value'];
+			if ($useAllTVs || in_array($tvId, $tvsToInclude)) {
+				$modx->fire->log("Getting value for TV $tvId ");
+				if ($templateVal === false) { // we haven't cached already
+					$tvs[$tvPrefix . $tvId] = !empty($processTVs) ? $resource->getTVValue($tvId) : $modx->getObject('modTemplateVar', array('name' => $tvId) )->get('value');
+				} else {
+					$tvs[$tvPrefix . $tvId] = $templateVal['value'];
+				}
+			}
         }
     }
+	$modx->fire->log('$tvs: ');
+$modx->fire->log($tvs);
+	
     $odd = ($idx & 1);
     $properties = array_merge(
         $scriptProperties
@@ -546,4 +632,7 @@ if (!empty($toPlaceholder)) {
     $modx->setPlaceholder($toPlaceholder,$output);
     return '';
 }
+
+$modx->fire->log('Pasrsing completed: ' . ($modx->getMicroTime() - $snippetStart));
+
 return $output;
