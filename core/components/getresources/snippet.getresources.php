@@ -1,11 +1,5 @@
 <?php
 
-
-$modx->getService('fire', 'modFire', $modx->getOption('core_path').'components/modfire/');
-
-$snippetStart = $modx->getMicroTime();
-$modx->fire->info('Starting snippet execution timer');
-
 /**
  * getResources
  *
@@ -81,9 +75,6 @@ $outputSeparator = isset($outputSeparator) ? $outputSeparator : "\n";
 $tpl = !empty($tpl) ? $tpl : '';
 $includeContent = !empty($includeContent) ? true : false;
 $includeTVs = isset($includeTVs) ? $includeTVs : false;
-
-$modx->fire->log('$includeTVs: ');
-$modx->fire->log($includeTVs);
 
 switch ($includeTVs) {
 	case '1':
@@ -180,8 +171,6 @@ if (!empty($resources)) {
 }
 
 
-$modx->fire->log('Preparation completed: ' . ($modx->getMicroTime() - $snippetStart));
-
 
 // Parse TV filters
 $tvsInFilters = array();
@@ -232,8 +221,6 @@ if (!empty($tvFilters)) {
 } else {
 	$conditions = array();	
 }
-
-$modx->fire->log('Conditions parsed: ' . ($modx->getMicroTime() - $snippetStart));
 
 
 if (!empty($where)) {
@@ -311,8 +298,6 @@ if (!empty($debug)) {
     $modx->log(modX::LOG_LEVEL_ERROR, $criteria->toSQL());
 }
 $collection = $modx->getCollection('modResource', $criteria);
-
-$modx->fire->log('Query completed: ' . ($modx->getMicroTime() - $snippetStart));
 
 
 $tv_cache = array();
@@ -529,7 +514,6 @@ if ($includeTVs !== false || !empty($conditions)) {
   }
 }
 
-$modx->fire->log('TV filtering completed: ' . ($modx->getMicroTime() - $snippetStart));
 
 // Set a placeholder to record the total number of results found
 $total = count($collection);
@@ -546,15 +530,6 @@ $first = empty($first) && $first !== '0' ? 1 : intval($first);
 $last = empty($last) ? (count($collection) + $idx - 1) : intval($last);
 
 
-
-$modx->fire->log('Starting to parse templates: ' . ($modx->getMicroTime() - $snippetStart));
-
-$modx->fire->log('$includeTVs: ');
-$modx->fire->log($includeTVs);
-
-$modx->fire->log('$tv_cache: ');
-$modx->fire->log($tv_cache);
-
 /* include parseTpl */
 include_once $modx->getOption('getresources.core_path',null,$modx->getOption('core_path').'components/getresources/').'include.parsetpl.php';
 
@@ -567,13 +542,10 @@ foreach ($collection as $resourceId => $resource) {
 		if (is_array($includeTVs) && empty($includeTVs)) {
 			$useAllTVs = true;
 		}
-		$tvsToInclude = array_merge($tvsInFilters, $includeTVs);	
-		
-		$modx->fire->log("Using all TVs? $useAllTVs");	
+		$tvsToInclude = array_merge($tvsInFilters, $includeTVs);
 						
         foreach ($tv_cache['resource'.$id] as $tvId => $templateVal) {
 			if ($useAllTVs || in_array($tvId, $tvsToInclude)) {
-				$modx->fire->log("Getting value for TV $tvId ");
 				if ($templateVal === false) { // we haven't cached already
 					$tvs[$tvPrefix . $tvId] = !empty($processTVs) ? $resource->getTVValue($tvId) : $modx->getObject('modTemplateVar', array('name' => $tvId) )->get('value');
 				} else {
@@ -582,8 +554,6 @@ foreach ($collection as $resourceId => $resource) {
 			}
         }
     }
-	$modx->fire->log('$tvs: ');
-$modx->fire->log($tvs);
 	
     $odd = ($idx & 1);
     $properties = array_merge(
@@ -632,7 +602,5 @@ if (!empty($toPlaceholder)) {
     $modx->setPlaceholder($toPlaceholder,$output);
     return '';
 }
-
-$modx->fire->log('Pasrsing completed: ' . ($modx->getMicroTime() - $snippetStart));
 
 return $output;
